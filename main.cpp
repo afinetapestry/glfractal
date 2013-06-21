@@ -11,31 +11,37 @@
 
 using namespace std;
 
-class Fractal : public Compute::Kernel, public Eventable, public Updateable, public Renderable {
+class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 	public:
 		Compute::Context & _context;
 		cl::CommandQueue & _queue;
-		Texture _texture;
 		cl::ImageGL * _image;
 		vector<cl::Memory> _glObjects;
+		Program & _glProgram;
 		int2 _size;
 		float2 _center;
 		float _scale;
 		int2 _mouse;
 
-		Fractal(Compute::Context & context, cl::CommandQueue & queue, cl::Program & clProgram, const string & name, Program & glProgram) :	Compute::Kernel(clProgram, name),
-																													Renderable(glProgram),
+		Texture _fractalTex;
+		Texture _profileTex;
+
+		Sprite _fractal;
+		Sprite _profile;
+
+		Fractal(Compute::Context & context, cl::CommandQueue & queue, cl::Program & clProgram, const string & name, Program & glProgram) : Compute::Kernel(clProgram, name),
+																													Renderable(),
 																													_context(context),
 																													_queue(queue),
 																													_image(NULL),
+																													_glProgram(glProgram),
 																													_size(0, 0),
 																													_center(0.0f, 0.0f),
 																													_scale(1.0f),
-																													_mouse(0, 0) {
-			glBindVertexArray(_vao);
-			_glException();
-			glBindBuffer(GL_ARRAY_BUFFER, _vbo);
-			_glException();
+																													_mouse(0, 0),
+																													_fractal(glProgram, _fractalTex),
+																													_profile(glProgram, _profileTex) {
+			
 			GLfloat data[] = {
 				// X	Y		Z			U		V
 				-1.0f,	-1.0f,	0.0f,		0.0f,	0.0f,
@@ -46,26 +52,42 @@ class Fractal : public Compute::Kernel, public Eventable, public Updateable, pub
 				-1.0f,	1.0f,	0.0f,		0.0f,	1.0f,
 				1.0f,	-1.0f,	0.0f,		1.0f,	0.0f
 			};
+
+			glBindVertexArray(_fractal._vao);
+			_glException();
+			glBindBuffer(GL_ARRAY_BUFFER, _fractal._vbo);
+			_glException();
 			glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
 			_glException();
-			glEnableVertexAttribArray(_program.attrib("vert"));
+			glEnableVertexAttribArray(glProgram.attrib("vert"));
 			_glException();
-			glVertexAttribPointer(_program.attrib("vert"), 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), NULL);
+			glVertexAttribPointer(glProgram.attrib("vert"), 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), NULL);
 			_glException();
-			glEnableVertexAttribArray(_program.attrib("vertTexCoord"));
+			glEnableVertexAttribArray(glProgram.attrib("vertTexCoord"));
 			_glException();
-			glVertexAttribPointer(_program.attrib("vertTexCoord"), 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (const GLvoid *)(3 * sizeof(GLfloat)));
+			glVertexAttribPointer(glProgram.attrib("vertTexCoord"), 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (const GLvoid *)(3 * sizeof(GLfloat)));
 			_glException();
-			_first = 0;
-			_count = 6;
+			_fractal._first = 0;
+			_fractal._count = sizeof(data) / 5;
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 			_glException();
 			glBindVertexArray(0);
-			_glException();	
+			_glException();
+			
+			glBindVertexArray(_profile._vao);
+			_glException();
+			glBindBuffer(GL_ARRAY_BUFFER, _profile._vbo);
+			_glException();
+			glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
+			_glException();
+			_profile._first = 0;
+			_profile._count = sizeof(data) / 5;
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+			_glException();
+			glBindVertexArray(0);
+			_glException();
 		}
 		~Fractal() {
-			glDeleteTextures(1, &_texture._texture);
-			_glException();
 			if (_image != NULL) {delete _image;}
 		}
 
@@ -112,28 +134,24 @@ class Fractal : public Compute::Kernel, public Eventable, public Updateable, pub
 			_queue.enqueueReleaseGLObjects(&_glObjects, NULL, &event);
 			event.wait();
 
-			glActiveTexture(GL_TEXTURE0);
-			_glException();
-			_texture.bind();
-			Renderable::render();
-			_texture.unbind();
+			_fractal.render();
 		}
 
 		void createTexture() {
 			glActiveTexture(GL_TEXTURE0);
 			_glException();
-			_program.uniform("tex", 0);
+			_glProgram.uniform("tex", 0);
 
 			_glObjects.clear();
 			if (_image != NULL) {delete _image;}
 
-			_texture.setParameters();
-			_texture.bind();
-			glTexImage2D(_texture._target, 0, GL_RGBA, _size.x, _size.y, 0, GL_RGBA, GL_FLOAT, NULL);
+			_fractalTex.setParameters();
+			_fractalTex.bind();
+			glTexImage2D(_fractalTex._target, 0, GL_RGBA, _size.x, _size.y, 0, GL_RGBA, GL_FLOAT, NULL);
 			_glException();
-			_image = new cl::ImageGL(*_context._context, CL_MEM_READ_WRITE, _texture._target, 0, _texture._texture, NULL);
+			_image = new cl::ImageGL(*_context._context, CL_MEM_READ_WRITE, _fractalTex._target, 0, _fractalTex._texture, NULL);
 			_glObjects.push_back(*_image);
-			_texture.unbind();
+			_fractalTex.unbind();
 		}
 
 		void execute() {
@@ -151,8 +169,8 @@ class Fractal : public Compute::Kernel, public Eventable, public Updateable, pub
 			_queue.enqueueNDRangeKernel(*_kernel, cl::NullRange, cl::NDRange(_size.x, _size.y), cl::NullRange, NULL, &event);
 			event.wait();
 
-			//double nanosecs = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() - event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
-			//printf("%fs\n", nanosecs / 1000000000.0f);
+			double nanosecs = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() - event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+			printf("%fs\n", nanosecs / 1000000000.0f);
 		}
 };
 
