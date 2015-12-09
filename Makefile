@@ -2,8 +2,8 @@ CC=g++
 CXX=g++
 LD=g++
 CFLAGS=-g -c $(shell sdl2-config --cflags) -I/opt/local/include -I/usr/include/OpenEXR -I../SDL/glengine
-LDFLAGS=$(shell sdl2-config --libs) -lSDL2_image -L/opt/local/lib -lGLEW -framework OpenGL -framework OpenCL
-SRC_C=../SDL/glengine/glerror.c clerr.c
+LDFLAGS=$(shell sdl2-config --libs) -lSDL2_image -lSDL2_ttf -L/opt/local/lib -lGLEW -framework OpenGL -framework OpenCL
+SRC_C=../SDL/glengine/glerror.c ../SDL/glengine/fontfactory.cpp clerr.c
 SRC_CXX=main.cpp
 OBJECTS=$(SRC_C:.c=.o) $(SRC_CXX:.cpp=.o)
 EXECUTABLE=glfractal

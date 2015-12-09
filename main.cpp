@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include <engine.hpp>
+#include <fontfactory.hpp>
 #include <sprite.hpp>
 #include <texture.hpp>
 
@@ -29,6 +30,8 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 		Sprite _fractal;
 		Sprite _profile;
 
+		TTF_Font * _font;
+
 		Fractal(Compute::Context & context, cl::CommandQueue & queue, cl::Program & clProgram, const string & name, Program & glProgram) : Compute::Kernel(clProgram, name),
 																													Renderable(),
 																													_context(context),
@@ -41,8 +44,9 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 																													_mouse(0, 0),
 																													_fractal(glProgram, _fractalTex),
 																													_profile(glProgram, _profileTex) {
-			
-			GLfloat data[] = {
+			_font = FontFactory::GetFont("FreeSansBold.ttf", 96);
+
+			GLfloat fracData[] = {
 				// X	Y		Z			U		V
 				-1.0f,	-1.0f,	0.0f,		0.0f,	0.0f,
 				1.0f,	-1.0f,	0.0f,		1.0f,	0.0f,
@@ -57,7 +61,7 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 			_glException();
 			glBindBuffer(GL_ARRAY_BUFFER, _fractal._vbo);
 			_glException();
-			glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(fracData), fracData, GL_STATIC_DRAW);
 			_glException();
 			glEnableVertexAttribArray(glProgram.attrib("vert"));
 			_glException();
@@ -68,20 +72,39 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 			glVertexAttribPointer(glProgram.attrib("vertTexCoord"), 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (const GLvoid *)(3 * sizeof(GLfloat)));
 			_glException();
 			_fractal._first = 0;
-			_fractal._count = sizeof(data) / 5;
+			_fractal._count = sizeof(fracData) / 5;
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 			_glException();
 			glBindVertexArray(0);
 			_glException();
+
+			GLfloat profileData[] = {
+				// X	Y		Z			U		V
+				0.8f,	0.8f,	0.0f,		0.0f,	1.0f,
+				1.0f,	0.8f,	0.0f,		1.0f,	1.0f,
+				0.8f,	1.0f,	0.0f,		0.0f,	0.0f,
+
+				1.0f,	1.0f,	0.0f,		1.0f,	0.0f,
+				0.8f,	1.0f,	0.0f,		0.0f,	0.0f,
+				1.0f,	0.8f,	0.0f,		1.0f,	1.0f
+			};
 			
 			glBindVertexArray(_profile._vao);
 			_glException();
 			glBindBuffer(GL_ARRAY_BUFFER, _profile._vbo);
 			_glException();
-			glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(profileData), profileData, GL_STATIC_DRAW);
+			_glException();
+			glEnableVertexAttribArray(glProgram.attrib("vert"));
+			_glException();
+			glVertexAttribPointer(glProgram.attrib("vert"), 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), NULL);
+			_glException();
+			glEnableVertexAttribArray(glProgram.attrib("vertTexCoord"));
+			_glException();
+			glVertexAttribPointer(glProgram.attrib("vertTexCoord"), 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (const GLvoid *)(3 * sizeof(GLfloat)));
 			_glException();
 			_profile._first = 0;
-			_profile._count = sizeof(data) / 5;
+			_profile._count = sizeof(profileData) / 5;
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 			_glException();
 			glBindVertexArray(0);
@@ -104,7 +127,14 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 					_mouse.y = event.motion.y;
 				} break;
 				case SDL_MOUSEWHEEL: {
-					float delta = pow(2.0f, (float)event.wheel.y);
+					float delta = min(max(pow(2.0f, (float)event.wheel.y), 0.0625f), 16.0f);
+					if (delta >= 1.0f) {
+						_center.x -= (((float)_size.x / 2.0f) - (float)_mouse.x) / ((float)_size.x / (_scale / delta));
+						_center.y += (((float)_size.y / 2.0f) - (float)_mouse.y) / ((float)_size.y / (_scale / delta));
+					} else {
+						_center.x += (((float)_size.x / 2.0f) - (float)_mouse.x) / ((float)_size.x / _scale);
+						_center.y -= (((float)_size.y / 2.0f) - (float)_mouse.y) / ((float)_size.y / _scale);
+					}
 					_scale /= delta;
 					Engine::RaiseRenderEvent();
 				} break;
@@ -134,7 +164,11 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 			_queue.enqueueReleaseGLObjects(&_glObjects, NULL, &event);
 			event.wait();
 
+			glDisable(GL_DEPTH_TEST);
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 			_fractal.render();
+			_profile.render();
 		}
 
 		void createTexture() {
@@ -166,11 +200,20 @@ class Fractal : public Compute::Kernel, public Eventable, public Renderable {
 			_kernel->setArg(4, (_center.y + (_scale / 2.0f)) / aspect);
 			//_kernel->setArg(5, max((int)(200.0f / _scale), 50));
 			_kernel->setArg(5, 200);
+			_kernel->setArg(6, _size.x);
+			_kernel->setArg(7, _size.y);
 			_queue.enqueueNDRangeKernel(*_kernel, cl::NullRange, cl::NDRange(_size.x, _size.y), cl::NullRange, NULL, &event);
 			event.wait();
 
 			double nanosecs = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() - event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
-			printf("%fs\n", nanosecs / 1000000000.0f);
+			char * str = new char[80];
+			snprintf(str, 80, "%fs", nanosecs / 1000000000.0f);
+			SDL_Color color = {255, 255, 255, 255};
+			SDL_Surface * surface;
+			if ((surface = TTF_RenderUTF8_Blended(_font, str, color)) == NULL) {throw runtime_error(TTF_GetError());}
+			Texture::ConvertSurface(&surface);
+			_profileTex.createTexture(surface);
+			SDL_FreeSurface(surface);
 		}
 };
 
